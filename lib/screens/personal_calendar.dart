@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Color palette
 final Color primaryColor = const Color(0xFF3A4276);
@@ -10,6 +12,44 @@ final Color textDarkColor = const Color(0xFF2E3440);
 final Color textLightColor = const Color(0xFF78849E);
 final Color bgColor = const Color(0xFFF9FAFC);
 final Color cardColor = Colors.white;
+
+class FirebaseEvent {
+  final String id; // Unique document ID
+  final String title;
+  final String? time;
+  final DateTime date;
+  
+  FirebaseEvent({
+    required this.id,
+    required this.title,
+    this.time,
+    required this.date,
+  });
+
+  // Convert to Map for Firestore
+  Map<String, dynamic> toFirestore() {
+    return {
+      'title': title,
+      'time': time,
+      'date': Timestamp.fromDate(date),
+      'userId': FirebaseAuth.instance.currentUser?.uid, // Add user ID
+    };
+  }
+
+  // Create from Firestore document
+  factory FirebaseEvent.fromFirestore(
+    DocumentSnapshot<Map<String, dynamic>> snapshot,
+    SnapshotOptions? options,
+  ) {
+    final data = snapshot.data()!;
+    return FirebaseEvent(
+      id: snapshot.id,
+      title: data['title'],
+      time: data['time'],
+      date: (data['date'] as Timestamp).toDate(),
+    );
+  }
+}
 
 class PersonalCalendar extends StatefulWidget {
   const PersonalCalendar({super.key});
@@ -23,7 +63,7 @@ class _PersonalCalendarState extends State<PersonalCalendar> {
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
   
-  final Map<DateTime, List<Event>> _events = {};
+  List<FirebaseEvent> _events = [];
   
   final TextEditingController _eventController = TextEditingController();
   final TextEditingController _eventTimeController = TextEditingController();
@@ -32,46 +72,119 @@ class _PersonalCalendarState extends State<PersonalCalendar> {
   void initState() {
     super.initState();
     _selectedDay = _focusedDay;
+    _fetchEvents();
   }
 
-  List<Event> _getEventsForDay(DateTime day) {
-    return _events[DateTime(day.year, day.month, day.day)] ?? [];
-  }
+  // Fetch events for the current user
+  Future<void> _fetchEvents() async {
+    // Ensure user is logged in
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      // Handle not logged in state
+      return;
+    }
 
-  void _addEvent() {
-    if (_selectedDay != null && _eventController.text.isNotEmpty) {
-      final eventText = _eventController.text;
-      final eventTime = _eventTimeController.text.isEmpty 
-          ? null 
-          : _eventTimeController.text;
-      
-      final event = Event(
-        title: eventText,
-        time: eventTime,
-      );
+    try {
+      final querySnapshot = await FirebaseFirestore.instance
+          .collection('calendar_events')
+          .where('userId', isEqualTo: user.uid) // Filter by current user
+          .where('date', isGreaterThanOrEqualTo: DateTime(2020, 1, 1))
+          .where('date', isLessThanOrEqualTo: DateTime(2030, 12, 31))
+          .orderBy('date')
+          .get();
       
       setState(() {
-        final selectedDate = DateTime(_selectedDay!.year, _selectedDay!.month, _selectedDay!.day);
-        if (_events[selectedDate] != null) {
-          _events[selectedDate]!.add(event);
-        } else {
-          _events[selectedDate] = [event];
-        }
+        _events = querySnapshot.docs
+            .map((doc) => FirebaseEvent.fromFirestore(doc, null))
+            .toList();
       });
-      
-      _eventController.clear();
-      _eventTimeController.clear();
+    } catch (e) {
+      print('Error fetching events: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to load events')),
+      );
     }
   }
+
+  // Get events for a specific day
+  List<FirebaseEvent> _getEventsForDay(DateTime day) {
+    return _events.where((event) => 
+      isSameDay(event.date, day)
+    ).toList();
+  }
+
+  // Add event to Firestore
+  Future<void> _addEvent() async {
+  // Get the current authenticated user
+  final user = FirebaseAuth.instance.currentUser;
   
-  void _deleteEvent(Event event, DateTime date) {
-    setState(() {
-      final selectedDate = DateTime(date.year, date.month, date.day);
-      _events[selectedDate]?.remove(event);
-      if (_events[selectedDate]?.isEmpty ?? false) {
-        _events.remove(selectedDate);
-      }
-    });
+  // Check if user is authenticated
+  if (user == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Please log in to add events')),
+    );
+    return;
+  }
+
+  // Validate input
+  if (_selectedDay == null || _eventController.text.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Please provide an event title')),
+    );
+    return;
+  }
+
+  try {
+    // Prepare event data
+    final eventData = {
+      'title': _eventController.text,
+      'time': _eventTimeController.text.isNotEmpty 
+          ? _eventTimeController.text 
+          : null,
+      'date': Timestamp.fromDate(_selectedDay!),
+      'userId': user.uid, // Explicitly add user ID
+    };
+
+    // Add document to Firestore
+    await FirebaseFirestore.instance
+        .collection('calendar_events')
+        .add(eventData);
+    
+    // Clear input controllers
+    _eventController.clear();
+    _eventTimeController.clear();
+
+    // Refresh events
+    await _fetchEvents();
+
+    // Show success message
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Event added successfully')),
+    );
+  } catch (e) {
+    // Detailed error handling
+    print('Error adding event: $e');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Failed to add event: ${e.toString()}')),
+    );
+  }
+}
+  
+  // Delete event from Firestore
+  Future<void> _deleteEvent(FirebaseEvent event) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('calendar_events')
+          .doc(event.id)
+          .delete();
+      
+      // Refresh events
+      await _fetchEvents();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete event')),
+      );
+    }
   }
 
   @override
@@ -235,7 +348,7 @@ class _PersonalCalendarState extends State<PersonalCalendar> {
     );
   }
 
-  Widget _buildEventCard(Event event) {
+   Widget _buildEventCard(FirebaseEvent event) {
     return Card(
       margin: EdgeInsets.symmetric(vertical: 4),
       elevation: 0,
@@ -266,7 +379,7 @@ class _PersonalCalendarState extends State<PersonalCalendar> {
             : null,
         trailing: IconButton(
           icon: Icon(Icons.delete_outline, color: textLightColor),
-          onPressed: () => _deleteEvent(event, _selectedDay!),
+          onPressed: () => _deleteEvent(event),
         ),
       ),
     );

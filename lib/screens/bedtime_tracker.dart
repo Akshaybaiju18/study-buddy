@@ -58,13 +58,15 @@ class _BedtimeTrackerPageState extends State<BedtimeTrackerPage> {
     });
     
     try {
-      // Get the user's bedtime settings
-      DocumentSnapshot userDoc = await _firestore
+      // Reference to the settings document
+      DocumentReference settingsRef = _firestore
           .collection('users')
           .doc(_userId)
           .collection('sleepData')
-          .doc('settings')
-          .get();
+          .doc('settings');
+      
+      // Get the user's bedtime settings
+      DocumentSnapshot userDoc = await settingsRef.get();
       
       if (userDoc.exists) {
         Map<String, dynamic> data = userDoc.data() as Map<String, dynamic>;
@@ -83,15 +85,28 @@ class _BedtimeTrackerPageState extends State<BedtimeTrackerPage> {
           // Load alarm state
           _alarmSet = data['alarmSet'] ?? false;
         });
+      } else {
+        // If document doesn't exist, create it with default values
+        await settingsRef.set({
+          'bedtimeHour': _bedtime.hour,
+          'bedtimeMinute': _bedtime.minute,
+          'wakeupHour': _wakeupTime.hour,
+          'wakeupMinute': _wakeupTime.minute,
+          'alarmSet': _alarmSet,
+          'lastUpdated': FieldValue.serverTimestamp(),
+        });
       }
       
-      // Get the user's weekly sleep data
-      QuerySnapshot sleepHistorySnapshot = await _firestore
+      // Reference to the history collection
+      CollectionReference historyRef = _firestore
           .collection('users')
           .doc(_userId)
           .collection('sleepData')
           .doc('history')
-          .collection('days')
+          .collection('days');
+      
+      // Get the user's weekly sleep data
+      QuerySnapshot sleepHistorySnapshot = await historyRef
           .orderBy('date', descending: true)
           .limit(7)
           .get();
@@ -110,6 +125,21 @@ class _BedtimeTrackerPageState extends State<BedtimeTrackerPage> {
         
         setState(() {
           _weekSleepData = weekData;
+        });
+      } else {
+        // If no sleep history exists, initialize with a record for today
+        DateTime now = DateTime.now();
+        String dateString = DateFormat('yyyy-MM-dd').format(now);
+        double sleepHours = _calculateSleepHours();
+        
+        await historyRef.doc(dateString).set({
+          'date': dateString,
+          'bedtimeHour': _bedtime.hour,
+          'bedtimeMinute': _bedtime.minute,
+          'wakeupHour': _wakeupTime.hour,
+          'wakeupMinute': _wakeupTime.minute,
+          'hoursSlept': sleepHours,
+          'lastUpdated': FieldValue.serverTimestamp(),
         });
       }
       
@@ -136,12 +166,13 @@ class _BedtimeTrackerPageState extends State<BedtimeTrackerPage> {
       if (user == null) return;
       
       // Save bedtime settings
-      await _firestore
+      DocumentReference settingsRef = _firestore
           .collection('users')
           .doc(_userId)
           .collection('sleepData')
-          .doc('settings')
-          .set({
+          .doc('settings');
+          
+      await settingsRef.set({
         'bedtimeHour': _bedtime.hour,
         'bedtimeMinute': _bedtime.minute,
         'wakeupHour': _wakeupTime.hour,
@@ -155,14 +186,15 @@ class _BedtimeTrackerPageState extends State<BedtimeTrackerPage> {
       DateTime now = DateTime.now();
       String dateString = DateFormat('yyyy-MM-dd').format(now);
       
-      await _firestore
+      DocumentReference historyRef = _firestore
           .collection('users')
           .doc(_userId)
           .collection('sleepData')
           .doc('history')
           .collection('days')
-          .doc(dateString)
-          .set({
+          .doc(dateString);
+          
+      await historyRef.set({
         'date': dateString,
         'bedtimeHour': _bedtime.hour,
         'bedtimeMinute': _bedtime.minute,
@@ -171,6 +203,9 @@ class _BedtimeTrackerPageState extends State<BedtimeTrackerPage> {
         'hoursSlept': sleepHours,
         'lastUpdated': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      
+      // Refresh the data to show the latest changes
+      await _loadUserData();
       
     } catch (e) {
       print('Error saving data: $e');
@@ -317,18 +352,23 @@ class _BedtimeTrackerPageState extends State<BedtimeTrackerPage> {
       ),
       body: _isLoading 
         ? const Center(child: CircularProgressIndicator(color: Colors.indigo))
-        : SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeader(sleepHours),
-                _buildTimePickers(),
-                const SizedBox(height: 8),
-                _buildSleepStats(),
-                const SizedBox(height: 8),
-                _buildTips(),
-              ],
+        : RefreshIndicator(
+            onRefresh: _loadUserData,
+            color: Colors.indigo,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(sleepHours),
+                  _buildTimePickers(),
+                  const SizedBox(height: 8),
+                  _buildSleepStats(),
+                  const SizedBox(height: 8),
+                  _buildTips(),
+                ],
+              ),
             ),
           ),
     );

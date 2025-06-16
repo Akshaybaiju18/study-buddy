@@ -11,6 +11,10 @@ import 'bedtime_tracker.dart';
 import 'package:study_buddy/screens/personal_calendar.dart';
 import 'package:study_buddy/screens/thoughts_journal.dart';
 import 'focus_timer.dart';
+import 'notes.dart';
+import 'progress.dart';
+import 'syllabus.dart';
+import 'health.dart';
 
 
 
@@ -269,7 +273,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   children: [
                     _buildQuoteCard(),
                     const SizedBox(height: 28),
-                    _buildStatsSection(),
+                    //_buildStatsSection(),
                     const SizedBox(height: 28),
                     _buildFeaturesSection(),
                   ],
@@ -380,7 +384,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       .slideY(begin: 0.1, end: 0, duration: const Duration(milliseconds: 600));
   }
   
-  Widget _buildStatsSection() {
+  /*Widget _buildStatsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -430,7 +434,7 @@ SingleChildScrollView(
 
       ],
     );
-  }
+  }*/
   
   Widget _buildStatCard({
     required IconData icon,
@@ -657,11 +661,46 @@ Widget _buildFeatureCard({
       }
 
       else if (route == "focus_timer") {
-       Navigator.push(
-     context,
-      MaterialPageRoute(builder: (context) => FocusTimer()),
-       );
-      }
+  String? userId = FirebaseAuth.instance.currentUser?.uid; // Get user ID
+
+  if (userId != null) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => FocusTimer(userId: userId)),
+    );
+  } else {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("User not logged in!"),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+}
+
+
+      else if (route == "notes") {  
+  Navigator.push(  
+    context,  
+    MaterialPageRoute(builder: (context) => NotesPage()),  
+  );  
+    }
+
+    else if (route == "syllabus") {
+  Navigator.push(
+    context,
+    MaterialPageRoute(builder: (context) => SyllabusApp()),
+  );
+}
+
+  else if (route == "health") {
+  Navigator.push(
+    context,
+    MaterialPageRoute(builder: (context) => HealthPage()),
+  );
+}
+
+
 
 
   
@@ -751,56 +790,73 @@ Widget _buildFeatureCard({
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           _buildNavItem(0, Icons.home_rounded, 'Home'),
-          _buildNavItem(1, Icons.calendar_today_rounded, 'Planner'),
+          //_buildNavItem(1, Icons.calendar_today_rounded, 'Planner'),
           _buildNavItem(2, Icons.analytics_rounded, 'Progress'),
-          _buildNavItem(3, Icons.person_rounded, 'Profile'),
+          //_buildNavItem(3, Icons.person_rounded, 'Profile'),
         ],
       ),
     );
   }
   
-  Widget _buildNavItem(int index, IconData icon, String label) {
-    bool isSelected = _selectedIndex == index;
-    
-    return InkWell(
-      onTap: () {
-        setState(() {
-          _selectedIndex = index;
-        });
-      },
-      child: SizedBox(
-        width: 80,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Animated indicator dot for selected item
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 300),
-              height: 4,
-              width: isSelected ? 20 : 0,
-              margin: const EdgeInsets.only(bottom: 6),
-              decoration: BoxDecoration(
-                color: primaryColor,
-                borderRadius: BorderRadius.circular(10),
-              ),
+Widget _buildNavItem(int index, IconData icon, String label) {
+  bool isSelected = _selectedIndex == index;
+
+  return InkWell(
+    onTap: () {
+      setState(() {
+        _selectedIndex = index;
+      });
+
+      if (index == 2) { // When "Progress" is clicked
+        String? userId = FirebaseAuth.instance.currentUser?.uid;
+        if (userId != null) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => ProgressTracker(userId: userId)),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("User not logged in!"),
+              backgroundColor: Colors.red,
             ),
-            Icon(
-              icon,
-              color: isSelected ? primaryColor : textLightColor,
-              size: 22,
+          );
+        }
+      }
+    },
+    child: SizedBox(
+      width: 80,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            height: 4,
+            width: isSelected ? 20 : 0,
+            margin: const EdgeInsets.only(bottom: 6),
+            decoration: BoxDecoration(
+              color: Colors.blue,
+              borderRadius: BorderRadius.circular(10),
             ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: GoogleFonts.poppins(
-                color: isSelected ? primaryColor : textLightColor,
-                fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
-                fontSize: 11,
-              ),
+          ),
+          Icon(
+            icon,
+            color: isSelected ? Colors.blue : Colors.grey,
+            size: 22,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? Colors.blue : Colors.grey,
+              fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
+              fontSize: 11,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
+
 }

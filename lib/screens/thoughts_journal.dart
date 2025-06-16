@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 
 // Color palette
 final Color primaryColor = const Color(0xFF3A4276);
@@ -10,6 +12,8 @@ final Color textLightColor = const Color(0xFF78849E);
 final Color bgColor = const Color(0xFFF9FAFC);
 final Color cardColor = Colors.white;
 
+
+
 class ThoughtsJournal extends StatefulWidget {
   const ThoughtsJournal({super.key});
 
@@ -19,64 +23,123 @@ class ThoughtsJournal extends StatefulWidget {
 
 class _ThoughtsJournalState extends State<ThoughtsJournal> {
   final TextEditingController _entryController = TextEditingController();
-  final Map<String, List<JournalEntry>> _entriesByDate = {};
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final CollectionReference _entriesCollection = FirebaseFirestore.instance.collection('journal_entries');
+  
+  Map<String, List<JournalEntry>> _entriesByDate = {};
+  bool _isLoading = true;
   
   @override
   void initState() {
     super.initState();
-    // Add some example entries for demonstration
-    _addSampleEntries();
+    _loadEntries();
   }
   
-  void _addSampleEntries() {
-    // This is just for demonstration purposes
-    // You would remove this in a real app
-    final today = DateTime.now();
-    final yesterday = today.subtract(Duration(days: 1));
-    final twoDaysAgo = today.subtract(Duration(days: 2));
+  // Load entries from Firestore
+  Future<void> _loadEntries() async {
+    setState(() {
+      _isLoading = true;
+    });
     
-    _addEntryWithDate("Started my day with meditation. Feeling calm and focused.", today);
-    _addEntryWithDate("Work meeting went well. New project looks promising.", today);
-    _addEntryWithDate("Feeling a bit stressed about the upcoming deadline.", yesterday);
-    _addEntryWithDate("Had a great conversation with an old friend today.", twoDaysAgo);
-  }
-  
-  void _addEntry() {
-    if (_entryController.text.isNotEmpty) {
-      _addEntryWithDate(_entryController.text, DateTime.now());
-      _entryController.clear();
+    try {
+      // Get all entries ordered by timestamp
+      QuerySnapshot querySnapshot = await _entriesCollection
+          .orderBy('timestamp', descending: true)
+          .get();
+      
+      Map<String, List<JournalEntry>> tempEntries = {};
+      
+      for (var doc in querySnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final entry = JournalEntry(
+          id: doc.id,
+          text: data['text'],
+          timestamp: (data['timestamp'] as Timestamp).toDate(),
+        );
+        
+        final dateKey = DateFormat('yyyy-MM-dd').format(entry.timestamp);
+        
+        if (tempEntries.containsKey(dateKey)) {
+          tempEntries[dateKey]!.add(entry);
+        } else {
+          tempEntries[dateKey] = [entry];
+        }
+      }
+      
+      setState(() {
+        _entriesByDate = tempEntries;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Error loading entries: $e');
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
   
-  void _addEntryWithDate(String text, DateTime date) {
-    final dateKey = DateFormat('yyyy-MM-dd').format(date);
-    
-    setState(() {
-      if (_entriesByDate.containsKey(dateKey)) {
-        _entriesByDate[dateKey]!.add(
-          JournalEntry(
-            text: text, 
-            timestamp: date,
-          ),
+  // Add entry to Firestore
+  Future<void> _addEntry() async {
+    if (_entryController.text.isNotEmpty) {
+      try {
+        final now = DateTime.now();
+        
+        // Add entry to Firestore
+        await _entriesCollection.add({
+          'text': _entryController.text,
+          'timestamp': Timestamp.fromDate(now),
+        });
+        
+        // Reload entries to get the updated list including the new entry
+        await _loadEntries();
+        
+        // Clear the text field
+        _entryController.clear();
+      } catch (e) {
+        print('Error adding entry: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to add entry. Please try again.')),
         );
-      } else {
-        _entriesByDate[dateKey] = [
-          JournalEntry(
-            text: text, 
-            timestamp: date,
-          ),
-        ];
       }
-    });
+    }
   }
   
-  void _deleteEntry(String dateKey, JournalEntry entry) {
-    setState(() {
-      _entriesByDate[dateKey]!.remove(entry);
-      if (_entriesByDate[dateKey]!.isEmpty) {
-        _entriesByDate.remove(dateKey);
-      }
-    });
+  // Delete entry from Firestore
+  Future<void> _deleteEntry(String dateKey, JournalEntry entry) async {
+    try {
+      // Delete from Firestore
+      await _entriesCollection.doc(entry.id).delete();
+      
+      // Update local state
+      setState(() {
+        _entriesByDate[dateKey]!.remove(entry);
+        if (_entriesByDate[dateKey]!.isEmpty) {
+          _entriesByDate.remove(dateKey);
+        }
+      });
+    } catch (e) {
+      print('Error deleting entry: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete entry. Please try again.')),
+      );
+    }
+  }
+
+  // Update an entry in Firestore
+  Future<void> _updateEntry(String id, String newText) async {
+    try {
+      await _entriesCollection.doc(id).update({
+        'text': newText,
+      });
+      
+      // Reload entries to reflect changes
+      await _loadEntries();
+    } catch (e) {
+      print('Error updating entry: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update entry. Please try again.')),
+      );
+    }
   }
   
   String _formatDateForDisplay(String dateKey) {
@@ -117,6 +180,10 @@ class _ThoughtsJournalState extends State<ThoughtsJournal> {
               // Implement search functionality
             },
           ),
+          IconButton(
+            icon: Icon(Icons.refresh, color: Colors.white),
+            onPressed: _loadEntries,
+          ),
         ],
       ),
       body: Column(
@@ -154,16 +221,18 @@ class _ThoughtsJournalState extends State<ThoughtsJournal> {
             ),
           ),
           Expanded(
-            child: sortedDates.isEmpty
-                ? _buildEmptyState()
-                : ListView.builder(
-                    padding: EdgeInsets.all(16),
-                    itemCount: sortedDates.length,
-                    itemBuilder: (context, index) {
-                      final dateKey = sortedDates[index];
-                      return _buildDateSection(dateKey);
-                    },
-                  ),
+            child: _isLoading
+                ? Center(child: CircularProgressIndicator(color: accentColor))
+                : sortedDates.isEmpty
+                    ? _buildEmptyState()
+                    : ListView.builder(
+                        padding: EdgeInsets.all(16),
+                        itemCount: sortedDates.length,
+                        itemBuilder: (context, index) {
+                          final dateKey = sortedDates[index];
+                          return _buildDateSection(dateKey);
+                        },
+                      ),
           ),
         ],
       ),
@@ -287,7 +356,7 @@ class _ThoughtsJournalState extends State<ThoughtsJournal> {
                       constraints: BoxConstraints(),
                       padding: EdgeInsets.all(8),
                       onPressed: () {
-                        // Implement edit functionality
+                        _showEditEntryDialog(entry);
                       },
                     ),
                     IconButton(
@@ -302,6 +371,48 @@ class _ThoughtsJournalState extends State<ThoughtsJournal> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showEditEntryDialog(JournalEntry entry) {
+    final textController = TextEditingController(text: entry.text);
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Edit Entry"),
+        content: TextField(
+          controller: textController,
+          maxLines: 5,
+          decoration: InputDecoration(
+            fillColor: bgColor,
+            filled: true,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            child: Text("Cancel"),
+            onPressed: () => Navigator.pop(context),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: accentColor,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              if (textController.text.isNotEmpty) {
+                _updateEntry(entry.id, textController.text);
+                Navigator.pop(context);
+              }
+            },
+            child: Text("Save"),
+          ),
+        ],
       ),
     );
   }
@@ -368,10 +479,27 @@ class _ThoughtsJournalState extends State<ThoughtsJournal> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  onPressed: () {
+                  onPressed: () async {
                     if (textController.text.isNotEmpty) {
-                      _addEntryWithDate(textController.text, DateTime.now());
-                      Navigator.pop(context);
+                      try {
+                        final now = DateTime.now();
+                        
+                        // Add entry to Firestore
+                        await _entriesCollection.add({
+                          'text': textController.text,
+                          'timestamp': Timestamp.fromDate(now),
+                        });
+                        
+                        // Reload entries
+                        await _loadEntries();
+                        
+                        Navigator.pop(context);
+                      } catch (e) {
+                        print('Error adding entry: $e');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Failed to add entry. Please try again.')),
+                        );
+                      }
                     }
                   },
                   child: Text("Save"),
@@ -386,10 +514,12 @@ class _ThoughtsJournalState extends State<ThoughtsJournal> {
 }
 
 class JournalEntry {
+  final String id;
   final String text;
   final DateTime timestamp;
   
   JournalEntry({
+    required this.id,
     required this.text,
     required this.timestamp,
   });
