@@ -131,7 +131,7 @@ The Firebase Firestore schema utilizes the following collections:
 
 ---
 
-## 🚀 Setup & Local Execution Instructions
+## Setup & Local Execution Instructions
 
 ### Prerequisites
 *   [Flutter SDK](https://docs.flutter.dev/get-started/install) installed.
